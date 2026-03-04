@@ -1,3 +1,15 @@
+/**
+ * @file miner.c
+ * @brief Single multi-threaded miner and multi-process logger system.
+ * Solves Proof of Work (POW) rounds by brute force using
+ * pthreads and communication via pipes.
+ * * @details Libraries and Modules:
+ * - Standard C Libraries: stdio.h, stdlib.h, string.h, time.h
+ * - POSIX Libraries: sys/types.h, sys/wait.h, unistd.h, fcntl.h, pthread.h
+ * - External Modules: "pow.h" (provides pow_hash function and POW_LIMIT).
+ * @author Rodrigo Díaz, Daniel Martinez
+ * @date March 2026
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +24,10 @@
 #define NO_SOLUTION -1
 #define MAX_SIZE 20
 
+/**
+ * @struct ThreadArgs
+ * @brief Stores the necessary arguments for each mining thread.
+ */
 typedef struct
 {
     int target;    /* Target to search*/
@@ -20,14 +36,23 @@ typedef struct
     int *solution; /* Store solution */
 } ThreadArgs;
 
+/**
+ * @struct MessagePipeline
+ * @brief Data packet sent from the Miner to the Logger through the pipe.
+ */
 typedef struct
 {
     int id_round;
     int target;
     int solucion;
-    int is_valid; /* 1 si es validada, 0 si es rechazada */
+    int is_valid; /* 1 is valid, 0 is no valid */
 } MessagePipeline;
 
+/**
+ * @brief Routine executed by each thread to search for the target by brute force.
+ * @param arg Pointer to the ThreadArgs structure containing the search limits.
+ * @return NULL upon completion.
+ */
 void *pow_func(void *arg)
 {
     ThreadArgs *args;
@@ -50,6 +75,15 @@ void *pow_func(void *arg)
     }
     return NULL;
 }
+
+/**
+ * @brief Main execution function.
+ * @details Validates inputs, spawns the Logger process via fork(), creates
+ * the pipelines, and manages the multithreaded rounds of the Miner.
+ * @param argc Number of arguments.
+ * @param argv Array of arguments (<TARGET_INI> <ROUNDS> <N_THREADS>).
+ * @return 0 on success, exits with EXIT_FAILURE otherwise.
+ */
 int main(int argc, char *argv[])
 {
     pid_t pid;
@@ -64,6 +98,9 @@ int main(int argc, char *argv[])
     int log_fd;
     char filename[50];
     MessagePipeline message;
+    FILE *f = NULL;
+    struct timespec start, end;
+    double total_time;
 
     if (argc != 4)
     {
@@ -77,8 +114,22 @@ int main(int argc, char *argv[])
     n_rounds = atoi(argv[2]);
     n_threads = atoi(argv[3]);
 
+    if (n_threads <= 0 || n_rounds <= 0 || target < 0 || target >= POW_LIMIT)
+    {
+        printf("Input error\n");
+        printf("Miner exited unexpectedly\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Dynamic memory allocation for threads and their arguments */
     threads = (pthread_t *)calloc(n_threads, sizeof(pthread_t));
     args = (ThreadArgs *)calloc(n_threads, sizeof(ThreadArgs));
+    if (threads == NULL || args == NULL)
+    {
+        perror("Error in calloc");
+        printf("Miner exited unexpectedly\n");
+        exit(EXIT_FAILURE);
+    }
     range = POW_LIMIT / n_threads;
 
     /* Initialize the arguments for each thread*/
@@ -95,7 +146,7 @@ int main(int argc, char *argv[])
     if (pipe1_status == -1)
     {
         perror("pipe");
-        printf("Miner exited unexpectedly");
+        printf("Miner exited unexpectedly\n");
         exit(EXIT_FAILURE);
     }
     /*Create the second pipeline*/
@@ -103,7 +154,14 @@ int main(int argc, char *argv[])
     if (pipe2_status == -1)
     {
         perror("pipe");
-        printf("Miner exited unexpectedly");
+        printf("Miner exited unexpectedly\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Start the timer to measure the time */
+    if (clock_gettime(CLOCK_MONOTONIC, &start) == -1)
+    {
+        perror("clock_gettime start");
         exit(EXIT_FAILURE);
     }
 
@@ -148,6 +206,7 @@ int main(int argc, char *argv[])
             /*Send confimation to the miner */
             write(fd2[1], "OK", 3);
         }
+        close(log_fd);
         close(fd1[0]);
         close(fd2[1]);
         free(threads);
@@ -167,7 +226,12 @@ int main(int argc, char *argv[])
             for (j = 0; j < n_threads; j++)
             {
                 args[j].target = target;
-                pthread_create(&threads[j], NULL, pow_func, &args[j]);
+                if (pthread_create(&threads[j], NULL, pow_func, &args[j]) != 0)
+                {
+                    fprintf(stderr, "Error: pthread_create failed\n");
+                    printf("Miner exited unexpectedly\n");
+                    exit(EXIT_FAILURE);
+                }
             }
             /* Loop to wait every thread to finish and continue with next round */
             for (j = 0; j < n_threads; j++)
@@ -175,8 +239,8 @@ int main(int argc, char *argv[])
                 pthread_join(threads[j], NULL);
             }
 
-            message.id_round = i+1;
-            message.is_valid = (rand() % 10 !=0); /*10% of no valid*/
+            message.id_round = i + 1;
+            message.is_valid = (rand() % 10 != 0); /*10% of no valid*/
             message.solucion = found_solution;
             message.target = target;
 
@@ -225,6 +289,21 @@ int main(int argc, char *argv[])
         }
         printf("Miner exited with status %d\n", EXIT_SUCCESS);
 
+        /* End the timer and pass the results to tiempos.txt */
+        if (clock_gettime(CLOCK_MONOTONIC, &end) == -1)
+        {
+            perror("clock_gettime end");
+            exit(EXIT_FAILURE);
+        }
+        total_time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+        if (!(f = fopen("tiempos.txt", "a")))
+        {
+            perror("Error opening tiempos.txt");
+        }
+        {
+            fprintf(f, "%-8i         %-8i          %-8lf\n", n_rounds, n_threads, total_time);
+        }
+        fclose(f);
         free(threads);
         free(args);
         exit(EXIT_SUCCESS);
