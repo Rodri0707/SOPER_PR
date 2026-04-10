@@ -1,0 +1,133 @@
+Id: 1
+Winner: 165709
+Target: 00000000
+Solution: 08916551 (validated)
+Votes: 3/3
+Wallets: 165709:1
+
+Id: 2
+Winner: 165709
+Target: 08916551
+Solution: 05970796 (validated)
+Votes: 3/3
+Wallets: 165709:2
+
+Id: 3
+Winner: 165709
+Target: 05970796
+Solution: 00937352 (validated)
+Votes: 3/3
+Wallets: 165709:3
+
+Id: 7
+Winner: 165709
+Target: 09331340
+Solution: 02986686 (validated)
+Votes: 3/3
+Wallets: 165709:4
+
+Id: 8
+Winner: 165709
+Target: 02986686
+Solution: 07299854 (rejected)
+Votes: 0/3
+Wallets: 165709:4
+
+Id: 9
+Winner: 165709
+Target: 02986686
+Solution: 07299854 (validated)
+Votes: 3/3
+Wallets: 165709:5
+
+Id: 23
+Winner: 165709
+Target: 08405727
+Solution: 01457266 (validated)
+Votes: 3/3
+Wallets: 165709:6
+
+Id: 24
+Winner: 165709
+Target: 01457266
+Solution: 01446753 (validated)
+Votes: 3/3
+Wallets: 165709:7
+
+Id: 25
+Winner: 165709
+Target: 01446753
+Solution: 07216332 (validated)
+Votes: 3/3
+Wallets: 165709:8
+
+Id: 26
+Winner: 165709
+Target: 07216332
+Solution: 08619049 (validated)
+Votes: 2/3
+Wallets: 165709:9
+
+Id: 29
+Winner: 165709
+Target: 03990700
+Solution: 04805188 (validated)
+Votes: 2/2
+Wallets: 165709:10
+
+Id: 35
+Winner: 165709
+Target: 00622273
+Solution: 07976003 (validated)
+Votes: 2/2
+Wallets: 165709:11
+
+Id: 37
+Winner: 165709
+Target: 06154908
+Solution: 05734742 (validated)
+Votes: 1/2
+Wallets: 165709:12
+
+Id: 38
+Winner: 165709
+Target: 05734742
+Solution: 02961610 (validated)
+Votes: 1/2
+Wallets: 165709:13
+
+Id: 44
+Winner: 165709
+Target: 03184039
+Solution: 05795776 (rejected)
+Votes: 0/2
+Wallets: 165709:13
+
+Id: 45
+Winner: 165709
+Target: 03184039
+Solution: 05795776 (validated)
+Votes: 2/2
+Wallets: 165709:14
+
+Id: 47
+Winner: 165709
+Target: 05112584
+Solution: 06881244 (validated)
+Votes: 2/2
+Wallets: 165709:15
+
+Id: 49
+Winner: 165709
+Target: 08219829
+Solution: 03685447 (validated)
+Votes: 1/1
+Wallets: 165709:16
+
+Id: 55
+Winner: 165709
+Target: 08028328
+Solution: 01952246 (validated)
+Votes: 1/1
+Wallets: 165709:17
+

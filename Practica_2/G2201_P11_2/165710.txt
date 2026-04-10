@@ -1,0 +1,105 @@
+Id: 4
+Winner: 165710
+Target: 00937352
+Solution: 01835314 (validated)
+Votes: 3/3
+Wallets: 165710:1
+
+Id: 5
+Winner: 165710
+Target: 01835314
+Solution: 09331340 (rejected)
+Votes: 1/3
+Wallets: 165710:1
+
+Id: 6
+Winner: 165710
+Target: 01835314
+Solution: 09331340 (validated)
+Votes: 3/3
+Wallets: 165710:2
+
+Id: 10
+Winner: 165710
+Target: 07299854
+Solution: 03981310 (validated)
+Votes: 3/3
+Wallets: 165710:3
+
+Id: 11
+Winner: 165710
+Target: 03981310
+Solution: 08021305 (validated)
+Votes: 2/3
+Wallets: 165710:4
+
+Id: 12
+Winner: 165710
+Target: 08021305
+Solution: 04673876 (validated)
+Votes: 3/3
+Wallets: 165710:5
+
+Id: 14
+Winner: 165710
+Target: 02013491
+Solution: 06435300 (rejected)
+Votes: 1/3
+Wallets: 165710:5
+
+Id: 15
+Winner: 165710
+Target: 02013491
+Solution: 06435300 (validated)
+Votes: 3/3
+Wallets: 165710:6
+
+Id: 16
+Winner: 165710
+Target: 06435300
+Solution: 03077079 (validated)
+Votes: 3/3
+Wallets: 165710:7
+
+Id: 18
+Winner: 165710
+Target: 05218179
+Solution: 00787429 (validated)
+Votes: 3/3
+Wallets: 165710:8
+
+Id: 19
+Winner: 165710
+Target: 00787429
+Solution: 07952220 (validated)
+Votes: 2/3
+Wallets: 165710:9
+
+Id: 20
+Winner: 165710
+Target: 07952220
+Solution: 02000011 (validated)
+Votes: 3/3
+Wallets: 165710:10
+
+Id: 22
+Winner: 165710
+Target: 09327418
+Solution: 08405727 (validated)
+Votes: 3/3
+Wallets: 165710:11
+
+Id: 27
+Winner: 165710
+Target: 08619049
+Solution: 03117528 (validated)
+Votes: 3/3
+Wallets: 165710:12
+
+Id: 28
+Winner: 165710
+Target: 03117528
+Solution: 03990700 (validated)
+Votes: 3/3
+Wallets: 165710:13
+

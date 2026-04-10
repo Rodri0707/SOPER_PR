@@ -3,7 +3,7 @@
  * @brief Single multi-threaded miner and multi-process logger system.
  * Solves Proof of Work (POW) rounds by brute force using
  * pthreads and communication via pipes.
- * @details Libraries and Modules:
+ * * @details Libraries and Modules:
  * - Standard C Libraries: stdio.h, stdlib.h, string.h, time.h
  * - POSIX Libraries: sys/types.h, sys/wait.h, unistd.h, fcntl.h, pthread.h
  * - External Modules: "pow.h" (provides pow_hash function and POW_LIMIT).
@@ -22,13 +22,10 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <fcntl.h>
-#include <signal.h>
 #include "pow.h"
 
 #define NO_SOLUTION -1
 #define MAX_SIZE 20
-
-/* POSIX named semaphores */
 #define SEM_NAME "/miners_mutex"
 #define SEM_TARGET "/target_mutex"
 #define SEM_WINNER "/winner_mutex"
@@ -41,20 +38,18 @@
 /**
  * @struct ThreadArgs
  * @brief Stores the necessary arguments for each mining thread.
- * Contains the search range assigned to each thread to divide the work.
  */
 typedef struct
 {
-    int target;    /* Target to search */
-    int start;     /* Starting on: lower bound of the search */
-    int end;       /* Going on until: upper bound of the search */
-    int *solution; /* Store solution: shared pointer to store the solution if found */
+    int target;    /* Target to search*/
+    int start;     /* Starting on: */
+    int end;       /* Going on until: */
+    int *solution; /* Store solution */
 } ThreadArgs;
 
 /**
  * @struct MessagePipeline
  * @brief Data packet sent from the Miner to the Logger through the pipe.
- * Data structure to be sent atomically through the pipe.
  */
 typedef struct
 {
@@ -67,41 +62,36 @@ typedef struct
     int coins;
 } MessagePipeline;
 
-/* * Global flags for asynchronous signal handling.
- * Declared as 'volatile sig_atomic_t' to ensure atomic reads and writes,
- * and to prevent compiler caching optimizations, since they can change
- * at any time due to an OS interrupt.
- */
-static volatile sig_atomic_t got_sigusr1 = 0; /* Indicates the start of a new round */
-static volatile sig_atomic_t got_sigusr2 = 0; /* Indicates that someone has won the round */
-static volatile sig_atomic_t time_is_up = 0;  /* Indicates that the lifetime alarm has expired */
+/* Global flag to know if we have received SIGUSR1 and SIGUSR2*/
+static volatile sig_atomic_t got_sigusr1 = 0;
+static volatile sig_atomic_t got_sigusr2 = 0;
 
 /**
- * @brief Routine executed by each thread to search for the target.
+ * @brief Routine executed by each thread to search for the target by brute force.
  * @param arg Pointer to the ThreadArgs structure containing the search limits.
  * @return NULL upon completion.
  */
 void *pow_func(void *arg)
 {
-    ThreadArgs *args = (ThreadArgs *)arg;
+    ThreadArgs *args;
     int i;
+    args = (ThreadArgs *)arg;
 
-    /* Brute-force search within the assigned range */
     for (i = args->start; i < args->end; i++)
     {
-        /* If another miner won (SIGUSR2) or the lifetime is up (SIGALRM) we abort */
-        if (got_sigusr2 == 1 || time_is_up == 1)
+        /*If someone discoverd the solition exit*/
+        if (got_sigusr2 == 1)
         {
             pthread_exit(NULL);
         }
 
-        /* We check if another thread *from our own process* has already found the solution */
+        /* Check if other thread has already found the solution*/
         if (*(args->solution) != NO_SOLUTION)
         {
             pthread_exit(NULL);
         }
 
-        /* Calculate the hash and check if it matches the target */
+        /* Check if it is the solution */
         if (pow_hash(i) == args->target)
         {
             *(args->solution) = i;
@@ -113,9 +103,9 @@ void *pow_func(void *arg)
 
 /**
  * @brief Registers the PID of the miner process in MINERS_LOG.
+ * Uses a POSIX named semaphore as a mutex to protect the file.
  * @param pid PID to register.
  * @param sem Already-opened semaphore (sem_t *).
- * @return 1 if it is the first miner in the system, 0 otherwise.
  */
 static int register_miner(pid_t pid, sem_t *sem)
 {
@@ -123,14 +113,21 @@ static int register_miner(pid_t pid, sem_t *sem)
     char line[64];
     int is_first = 0;
 
+    /*Critical seccion*/
     sem_wait(sem);
-    /* Check if the file exists. If not, we are the first miner */
+
+    /*See if this is the first miner*/
     f = fopen(MINERS_LOG, "r");
     if (f == NULL)
+    {
         is_first = 1;
+    }
     else
+    {
         fclose(f);
+    }
 
+    /* Write PID to the file */
     f = fopen(MINERS_LOG, "a");
     if (f == NULL)
     {
@@ -138,12 +135,12 @@ static int register_miner(pid_t pid, sem_t *sem)
         sem_post(sem);
         return -1;
     }
+
     fprintf(f, "Miner PID: %d\n", (int)pid);
     fclose(f);
 
     printf("Miner %d added to system\n", (int)pid);
 
-    /* Display the current list of miners */
     f = fopen(MINERS_LOG, "r");
     if (f != NULL)
     {
@@ -151,13 +148,14 @@ static int register_miner(pid_t pid, sem_t *sem)
             printf(" %s", line);
         fclose(f);
     }
+
     sem_post(sem);
     return is_first;
 }
 
 /**
  * @brief Removes the miner's PID from MINERS_LOG. If it was the last one,
- * destroys the file.
+ * destroys the file. Protected by the semaphore.
  * @param pid PID of the exiting miner.
  * @param sem Already opened semaphore.
  * @return The number of remaining miners in the system.
@@ -171,7 +169,10 @@ static int unregister_miner(pid_t pid, sem_t *sem)
 
     snprintf(pid_line, sizeof(pid_line), "Miner PID: %d\n", (int)pid);
 
+    /*Critical section*/
     sem_wait(sem);
+
+    /* Read the file and rewrite it without this PID's line */
     f = fopen(MINERS_LOG, "r");
     if (f == NULL)
     {
@@ -179,7 +180,6 @@ static int unregister_miner(pid_t pid, sem_t *sem)
         return 0;
     }
 
-    /* Use a temporary file to copy all PIDs except ours */
     FILE *tmp = fopen("miners_tmp.log", "w");
     if (tmp == NULL)
     {
@@ -200,7 +200,6 @@ static int unregister_miner(pid_t pid, sem_t *sem)
     fclose(f);
     fclose(tmp);
 
-    /* If there are no miners left, clean up the temporary files and the log */
     if (remaining == 0)
     {
         remove("miners_tmp.log");
@@ -208,7 +207,6 @@ static int unregister_miner(pid_t pid, sem_t *sem)
     }
     else
     {
-        /* If there are miners left, replace the old log with the updated temporary one */
         rename("miners_tmp.log", MINERS_LOG);
         f = fopen(MINERS_LOG, "r");
         while (fgets(line, sizeof(line), f) != NULL)
@@ -217,24 +215,20 @@ static int unregister_miner(pid_t pid, sem_t *sem)
         }
         fclose(f);
     }
+
     printf("Miner %d exited system\n", (int)pid);
     sem_post(sem);
 
     return remaining;
 }
 
-/**
- * @brief Verifies the proposed solution and vote in the voting file.
- */
 void vote(int target, int solution_proposed, sem_t *sem_votes)
 {
     FILE *f = NULL;
     char vote;
 
-    /* Verify if the solution is correct */
     if (pow_hash(solution_proposed) == target)
     {
-        /* Introduce a 20% probability of wrong vote */
         if (rand() % 100 < 20)
             vote = 'N';
         else
@@ -255,9 +249,6 @@ void vote(int target, int solution_proposed, sem_t *sem_votes)
     sem_post(sem_votes);
 }
 
-/**
- * @brief Counts the number of miners currently registered.
- */
 int count_miners(sem_t *sem)
 {
     FILE *f;
@@ -265,6 +256,7 @@ int count_miners(sem_t *sem)
     int total = 0;
 
     sem_wait(sem);
+
     f = fopen(MINERS_LOG, "r");
     if (f != NULL)
     {
@@ -272,70 +264,83 @@ int count_miners(sem_t *sem)
             total++;
         fclose(f);
     }
+
     sem_post(sem);
 
     return total;
 }
 
-/**
- * @brief  Signal handler.
- * @details Modifies global atomic flags depending on the received signal.
- */
 static void handler_yo(int sig)
 {
     if (sig == SIGUSR1)
-        got_sigusr1 = 1; /* New round started */
+    {
+        got_sigusr1 = 1;
+    }
     if (sig == SIGUSR2)
-        got_sigusr2 = 1; /* Someone found the solution */
-    if (sig == SIGALRM)
-        time_is_up = 1; /* Alarm expired: lifetime ended */
+    {
+        got_sigusr2 = 1;
+    }
 }
 
 /**
- * @brief The winner counts the votes.
+ * @brief El ganador recuenta los votos de la urna, esperando a que todos voten.
+ * @param sem Semáforo de la lista de mineros (para saber cuántos somos).
+ * @param sem_votes Semáforo de la urna de votos.
+ * @param p_yes_votes Puntero para devolver el número de votos 'Y'.
+ * @param p_total_votes Puntero para devolver el total de votos esperados.
+ * @param votes_array Cadena de texto para dibujar los votos (ej: "Y N Y ").
  */
 void count_votes(sem_t *sem, sem_t *sem_votes, int *p_yes_votes, int *p_total_votes, char *votes_array)
 {
     FILE *f;
+    char line[64];
     int total_miners = 0;
     int expected_votes = 0;
     int current_votes = 0;
     int yes_votes = 0;
-    char v;
-    int len;
 
-    int retries = 0;
-    int MAX_RETRIES = 50; /* Limit to avoid deadlocks */
+    int retries = 0;      /* NUEVO: Contador de las veces que hemos mirado la urna */
+    int MAX_RETRIES = 50; /* NUEVO: Límite máximo (50 veces * 0.1s = 5 segundos esperando) */
 
-    struct timespec req = {0, 100000000L};
+    /* 1. Pasamos lista para saber cuántos mineros somos */
+    sem_wait(sem);
+    f = fopen(MINERS_LOG, "r");
+    if (f != NULL)
+    {
+        while (fgets(line, sizeof(line), f) != NULL)
+            total_miners++;
+        fclose(f);
+    }
+    sem_post(sem);
 
-    total_miners = count_miners(sem);
-    /* We expect a vote from everyone, except the winner */
+    /* Esperamos un voto de todos, menos de nosotros mismos */
     expected_votes = total_miners - 1;
 
-    /* Keep reading until all votes arrive or we exceed the limit */
+    /* 2. Nos quedamos en bucle leyendo la urna hasta que estén todos los votos */
     while (current_votes < expected_votes && retries < MAX_RETRIES)
     {
-        /* Wait of 100 milliseconds */
+        struct timespec req = {0, 100000000L};
         nanosleep(&req, NULL);
         retries++;
 
         current_votes = 0;
         yes_votes = 0;
-        votes_array[0] = '\0'; /* Reset the string in each read iteration */
+        votes_array[0] = '\0'; /* Limpiamos la cadena en cada lectura */
 
         sem_wait(sem_votes);
         f = fopen(VOTING_FILE, "r");
         if (f != NULL)
         {
-            /* Read vote by vote skipping spaces */
+            char v;
+            /* Leemos letra a letra separada por espacios */
             while (fscanf(f, " %c", &v) == 1)
             {
                 current_votes++;
                 if (v == 'Y')
                     yes_votes++;
 
-                len = strlen(votes_array);
+                /* Añadimos el voto a la cadena de texto para imprimirlo luego */
+                int len = strlen(votes_array);
                 if (len < 250)
                 {
                     votes_array[len] = v;
@@ -347,7 +352,8 @@ void count_votes(sem_t *sem, sem_t *sem_votes, int *p_yes_votes, int *p_total_vo
         }
         sem_post(sem_votes);
     }
-    /* Assign results to the pointers passed by reference */
+
+    /* Devolvemos los resultados a través de los punteros */
     *p_yes_votes = yes_votes;
     *p_total_votes = current_votes;
 }
@@ -356,16 +362,20 @@ void count_votes(sem_t *sem, sem_t *sem_votes, int *p_yes_votes, int *p_total_vo
  * @brief Main execution function.
  * @details Validates inputs, spawns the Logger process via fork(), creates
  * the pipelines, and manages the multithreaded rounds of the Miner.
+ * @param argc Number of arguments.
+ * @param argv Array of arguments (<TARGET_INI> <ROUNDS> <N_THREADS>).
+ * @return 0 on success, exits with EXIT_FAILURE otherwise.
  */
 int main(int argc, char *argv[])
 {
     pid_t pid;
-    int i, j, n_secs, n_threads, range, found_solution, target, my_coins = 0;
+    int i, j, n_secs, n_threads, range, found_solution, target;
     int id_round = 0;
     int remaining_miners;
     int is_winner;
     pthread_t *threads = NULL;
     ThreadArgs *args = NULL;
+    int my_coins = 0;
 
     int flag_first_miner;
     int pipe1_status, pipe2_status;
@@ -381,6 +391,8 @@ int main(int argc, char *argv[])
 
     FILE *f = NULL;
     MessagePipeline message;
+    struct timespec t_start, t_now;
+    double tiempoPasado = 0;
 
     sem_t *sem = NULL;
     sem_t *sem_target = NULL;
@@ -390,11 +402,10 @@ int main(int argc, char *argv[])
     struct sigaction act;
     sigset_t wait_mask, block_mask_SIG1, block_mask_SIG2;
 
-    struct timespec req = {0, 100000000L};
-
     if (argc != 3)
     {
         fprintf(stderr, "./%s <N_SECS> <N_THREADS>\n", argv[0]);
+        printf("Miner exited with status %d\n", EXIT_FAILURE);
         exit(EXIT_FAILURE);
     }
 
@@ -402,79 +413,114 @@ int main(int argc, char *argv[])
     n_secs = atoi(argv[1]);
     n_threads = atoi(argv[2]);
 
-    if (n_threads <= 0 || n_secs <= 0)
+    if (n_threads <= 0 || n_secs < 0)
     {
         printf("Input error\n");
         printf("Miner exited unexpectedly\n");
         exit(EXIT_FAILURE);
     }
 
-    act.sa_flags = SA_RESTART;
+    /*Signals*/
+    act.sa_flags = 0;
+    /*Empty de mask*/
     sigemptyset(&act.sa_mask);
     act.sa_handler = handler_yo;
 
     if (sigaction(SIGUSR1, &act, NULL) == -1)
     {
-        perror("SIGUSR1");
-        printf("Miner exited unexpectedly\n");
+        perror("Error when initialize SIGUSR1");
         exit(EXIT_FAILURE);
     }
+
     if (sigaction(SIGUSR2, &act, NULL) == -1)
     {
-        perror("SIGUSR2");
-        printf("Miner exited unexpectedly\n");
-        exit(EXIT_FAILURE);
-    }
-    if (sigaction(SIGALRM, &act, NULL) == -1)
-    {
-        perror("SIGALRM");
-        printf("Miner exited unexpectedly\n");
+        perror("Error when initialize SIGUSR2");
         exit(EXIT_FAILURE);
     }
 
-    /* Initialize semaphores */
+    /*Initialize sems*/
     sem = sem_open(SEM_NAME, O_CREAT, 0644, 1);
-    sem_target = sem_open(SEM_TARGET, O_CREAT, 0644, 1);
-    sem_winner = sem_open(SEM_WINNER, O_CREAT, 0644, 1);
-    sem_votes = sem_open(SEM_VOTES, O_CREAT, 0644, 1);
-
-    if (sem == SEM_FAILED || sem_target == SEM_FAILED || sem_winner == SEM_FAILED || sem_votes == SEM_FAILED)
+    if (sem == SEM_FAILED)
     {
-        perror("sem_open error");
+        perror("sem_open");
         printf("Miner exited unexpectedly\n");
         exit(EXIT_FAILURE);
     }
 
-    /* Register the miner and indicate if it is the first */
+    sem_target = sem_open(SEM_TARGET, O_CREAT, 0644, 1);
+    if (sem_target == SEM_FAILED)
+    {
+        perror("sem_open");
+        printf("Miner exited unexpectedly\n");
+        exit(EXIT_FAILURE);
+    }
+
+    sem_winner = sem_open(SEM_WINNER, O_CREAT, 0644, 1);
+    if (sem_winner == SEM_FAILED)
+    {
+        perror("sem_open");
+        printf("Miner exited unexpectedly\n");
+        exit(EXIT_FAILURE);
+    }
+
+    sem_votes = sem_open(SEM_VOTES, O_CREAT, 0644, 1);
+    if (sem_votes == SEM_FAILED)
+    {
+        perror("sem_open");
+        printf("Miner exited unexpectedly\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Register miner PID in miners.log */
     flag_first_miner = register_miner(getpid(), sem);
 
-    /* Dynamic memory allocation for the threads */
+    /* Dynamic memory allocation for threads and their arguments */
     threads = (pthread_t *)calloc(n_threads, sizeof(pthread_t));
     args = (ThreadArgs *)calloc(n_threads, sizeof(ThreadArgs));
     if (threads == NULL || args == NULL)
     {
-        perror("calloc error");
+        perror("Error in calloc");
         printf("Miner exited unexpectedly\n");
+        sem_close(sem);
         exit(EXIT_FAILURE);
     }
 
-    /* Distribute the search range among the number of threads */
     range = POW_LIMIT / n_threads;
+
+    /* Initialize the arguments for each thread */
     for (i = 0; i < n_threads; i++)
     {
         args[i].start = i * range;
         args[i].end = (i + 1) * range;
         args[i].solution = &found_solution;
     }
-    args[n_threads - 1].end = POW_LIMIT; /* Adjustment to not leave unexplored space in the last thread */
+    args[n_threads - 1].end = POW_LIMIT; /* To make sure that we dont exceed the limit */
 
-    /* Create pipes for the Miner (Parent) to talk to the Logger (Child) */
+    /* Create the first pipeline */
     pipe1_status = pipe(fd1);
-    pipe2_status = pipe(fd2);
-    if (pipe1_status == -1 || pipe2_status == -1)
+    if (pipe1_status == -1)
     {
-        perror("pipe error");
+        perror("pipe");
         printf("Miner exited unexpectedly\n");
+        sem_close(sem);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Create the second pipeline */
+    pipe2_status = pipe(fd2);
+    if (pipe2_status == -1)
+    {
+        perror("pipe");
+        printf("Miner exited unexpectedly\n");
+        sem_close(sem);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Start the timer to measure the time */
+    if (clock_gettime(CLOCK_MONOTONIC, &t_start) == -1)
+    {
+        perror("clock_gettime start");
+        sem_close(sem);
         exit(EXIT_FAILURE);
     }
 
@@ -482,22 +528,20 @@ int main(int argc, char *argv[])
     if (pid < 0)
     {
         perror("Error in the Fork");
-        printf("Miner exited unexpectedly\n");
+        printf("Miner exited with status %d\n", EXIT_FAILURE);
+        sem_close(sem);
         exit(EXIT_FAILURE);
     }
-    /* CHILD PROCESS (LOGGER) */
+    /* Logger */
     else if (pid == 0)
     {
-        /* Close the pipe */
         close(fd1[1]);
         close(fd2[0]);
 
-        /* The logger does not need semaphores */
+        /* The child inherits the open semaphore; we close it because it doesn't need access to miners.log */
         sem_close(sem);
-        sem_close(sem_target);
-        sem_close(sem_winner);
-        sem_close(sem_votes);
 
+        /* Get the name of the .log */
         snprintf(filename, sizeof(filename), "%d.txt", getppid());
         log_fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (log_fd == -1)
@@ -527,6 +571,7 @@ int main(int argc, char *argv[])
             /* Send confimation to the miner */
             write(fd2[1], "OK", 3);
         }
+
         close(log_fd);
         close(fd1[0]);
         close(fd2[1]);
@@ -534,82 +579,90 @@ int main(int argc, char *argv[])
         free(args);
         exit(EXIT_SUCCESS);
     }
-    /* PARENT PROCESS (MINER)*/
+    /* Miner */
     else
     {
-        /* Close pipe ends not used by the parent */
         close(fd1[0]);
         close(fd2[1]);
 
-        /* Configure masks to protect sigsuspend entry */
-        sigemptyset(&wait_mask);
+        /* Initialize signal masks */
+        sigemptyset(&wait_mask); /* Empty mask: allow all signals while suspended */
 
         sigemptyset(&block_mask_SIG1);
-        sigaddset(&block_mask_SIG1, SIGUSR1);
+        sigaddset(&block_mask_SIG1, SIGUSR1); /* Block SIGUSR1 temporarily */
+
         sigemptyset(&block_mask_SIG2);
-        sigaddset(&block_mask_SIG2, SIGUSR2);
+        sigaddset(&block_mask_SIG2, SIGUSR2); /* Block SIGUSR2 temporarily */
 
-        /* Exactly in n_secs, we send SIGALRM to this process */
-        alarm(n_secs);
-
-        /* The first miner entering the system */
+        /* The first miner creates the initial target file */
         if (flag_first_miner)
         {
-            while (count_miners(sem) < 2 && !time_is_up)
+            while (count_miners(sem) < 2)
             {
+                clock_gettime(CLOCK_MONOTONIC, &t_now);
+                tiempoPasado = (t_now.tv_sec - t_start.tv_sec) +
+                               (t_now.tv_nsec - t_start.tv_nsec) / 1e9;
+                if (tiempoPasado >= (double)n_secs)
+                    break;
+
                 struct timespec req = {0, 100000000L};
                 nanosleep(&req, NULL);
             }
 
-            if (!time_is_up)
+            f = fopen(TARGET_FILE, "w");
+            if (f == NULL)
             {
-                sem_wait(sem_target);
-                f = fopen(TARGET_FILE, "w");
-                target = 0;
-                fprintf(f, "%d\n", target);
-                fclose(f);
-                sem_post(sem_target);
-
-                /* Send signal SIGUSR1 */
-                sem_wait(sem);
-                f = fopen(MINERS_LOG, "r");
-                if (f != NULL)
-                {
-                    while (fgets(line, sizeof(line), f) != NULL)
-                        if (sscanf(line, "Miner PID: %d", &auxPID) == 1)
-                            kill(auxPID, SIGUSR1);
-                    fclose(f);
-                }
-                sem_post(sem);
-                /* We set our own flag to start */
-                got_sigusr1 = 1;
+                perror("Error opening " TARGET_FILE);
+                exit(EXIT_FAILURE);
             }
+            target = 0;
+            fprintf(f, "%d\n", target);
+            fclose(f);
+
+            /* Notify all registered miners that the first target is ready */
+            sem_wait(sem);
+            f = fopen(MINERS_LOG, "r");
+            if (f != NULL)
+            {
+                while (fgets(line, sizeof(line), f) != NULL)
+                    if (sscanf(line, "Miner PID: %d", &auxPID) == 1)
+                        kill(auxPID, SIGUSR1);
+                fclose(f);
+            }
+            sem_post(sem);
+
+            /* The first miner also activates itself */
+            got_sigusr1 = 1;
         }
 
-        while (!time_is_up)
+        /* Main mining loop */
+        while (tiempoPasado < (double)n_secs)
         {
-            /* If we are left alone, pause mining */
             if (count_miners(sem) < 2)
             {
+                clock_gettime(CLOCK_MONOTONIC, &t_now);
+                tiempoPasado = (t_now.tv_sec - t_start.tv_sec) +
+                               (t_now.tv_nsec - t_start.tv_nsec) / 1e9;
+                struct timespec req = {0, 100000000L};
                 nanosleep(&req, NULL);
                 continue;
             }
-
-            /*Temporarily block SIGUSR1. If the signal arrives right at this microsecond
-             * fraction, it will be "pending" and sigsuspend will catch it immediately.*/
+            /* Block SIGUSR1 to avoid race conditions before waiting */
             sigprocmask(SIG_BLOCK, &block_mask_SIG1, NULL);
-            while (got_sigusr1 == 0 && !time_is_up)
+
+            /* Wait until SIGUSR1 is received */
+            while (got_sigusr1 == 0)
             {
-                sigsuspend(&wait_mask);
+                sigsuspend(&wait_mask); /* Suspend safely with signals enabled */
             }
-            sigprocmask(SIG_UNBLOCK, &block_mask_SIG1, NULL);
 
-            /* If SIGALRM woke us instead of SIGUSR1, break the loop*/
-            if (time_is_up)
-                break;
-
+            /* Reset signal flag for the next round */
             got_sigusr1 = 0;
 
+            /* Unblock SIGUSR1 after waking up */
+            sigprocmask(SIG_UNBLOCK, &block_mask_SIG1, NULL);
+
+            /* Read the current target safely */
             sem_wait(sem_target);
             f = fopen(TARGET_FILE, "r");
             if (f != NULL)
@@ -623,36 +676,41 @@ int main(int argc, char *argv[])
             found_solution = NO_SOLUTION;
             is_winner = 0;
 
+            /* Loop to creat all the threads */
             for (j = 0; j < n_threads; j++)
             {
                 args[j].target = target;
-                pthread_create(&threads[j], NULL, pow_func, &args[j]);
+                if (pthread_create(&threads[j], NULL, pow_func, &args[j]) != 0)
+                {
+                    fprintf(stderr, "Error: pthread_create failed\n");
+                    printf("Miner exited unexpectedly\n");
+                    exit(EXIT_FAILURE);
+                }
             }
 
+            /* Loop to wait every thread to finish and continue with next round */
             for (j = 0; j < n_threads; j++)
             {
                 pthread_join(threads[j], NULL);
             }
 
-            if (time_is_up)
-                break;
-
-            /* Evaluate if we found the solution before anyone sent us SIGUSR2 */
+            /*The solution is found*/
             if ((found_solution != NO_SOLUTION) && (got_sigusr2 == 0))
             {
-                /* Many could find the solution at the same time. The first to lock
-                 * the sem_winner is the winner. */
+                /*Try to be the first one*/
                 if (sem_trywait(sem_winner) == 0)
                 {
                     is_winner = 1;
 
+                    /*Clean de Voting file*/
                     sem_wait(sem_votes);
                     f = fopen(VOTING_FILE, "w");
                     if (f != NULL)
+                    {
                         fclose(f);
+                    }
                     sem_post(sem_votes);
 
-                    /* The winner inscribes its solution on the target.txt */
                     sem_wait(sem_target);
                     f = fopen(TARGET_FILE, "w");
                     if (f != NULL)
@@ -662,7 +720,6 @@ int main(int argc, char *argv[])
                     }
                     sem_post(sem_target);
 
-                    /* The winner stops everyone by sending them SIGUSR2 */
                     sem_wait(sem);
                     f = fopen(MINERS_LOG, "r");
                     if (f != NULL)
@@ -670,8 +727,13 @@ int main(int argc, char *argv[])
                         while (fgets(line, sizeof(line), f) != NULL)
                         {
                             if (sscanf(line, "Miner PID: %d", &auxPID) == 1)
+                            {
+                                /*We dont throw the signal to the process who sent */
                                 if (auxPID != getpid())
+                                {
                                     kill(auxPID, SIGUSR2);
+                                }
+                            }
                         }
                         fclose(f);
                     }
@@ -679,21 +741,19 @@ int main(int argc, char *argv[])
                 }
             }
 
-            /*The losers*/
+            /*The miners losers*/
             if (is_winner == 0)
             {
                 sigprocmask(SIG_BLOCK, &block_mask_SIG2, NULL);
-                while (got_sigusr2 == 0 && !time_is_up)
+                /* Wait until SIGUSR2 is received */
+                while (got_sigusr2 == 0)
                 {
-                    sigsuspend(&wait_mask);
+                    sigsuspend(&wait_mask); /* Suspend safely with signals enabled */
                 }
-                sigprocmask(SIG_UNBLOCK, &block_mask_SIG2, NULL);
-
-                /* If the alarm cut our sleep short, we go home */
-                if (time_is_up && got_sigusr2 == 0)
-                    break;
-
                 got_sigusr2 = 0;
+
+                /* Unblock SIGUSR2 after waking up */
+                sigprocmask(SIG_UNBLOCK, &block_mask_SIG2, NULL);
 
                 solucion_ganador = NO_SOLUTION;
                 sem_wait(sem_target);
@@ -708,7 +768,6 @@ int main(int argc, char *argv[])
                 vote(target, solucion_ganador, sem_votes);
                 message.is_valid = 0;
             }
-            /*The winner*/
             else
             {
                 int yes_votes = 0;
@@ -716,7 +775,6 @@ int main(int argc, char *argv[])
                 char votes_array[256] = "";
 
                 count_votes(sem, sem_votes, &yes_votes, &current_votes, votes_array);
-
                 if (current_votes == 0)
                 {
                     continue;
@@ -730,7 +788,6 @@ int main(int argc, char *argv[])
                 else
                 {
                     printf("Winner %d => [ %s] => Rejected\n", getpid(), votes_array);
-
                     message.is_valid = 0;
 
                     sem_wait(sem_target);
@@ -755,28 +812,38 @@ int main(int argc, char *argv[])
                     exit(EXIT_FAILURE);
 
                 read(fd2[0], read_buffer, MAX_SIZE);
+
                 sem_post(sem_winner);
 
-                /*New round */
+                /*New round*/
                 sem_wait(sem);
                 f = fopen(MINERS_LOG, "r");
                 if (f != NULL)
                 {
                     while (fgets(line, sizeof(line), f) != NULL)
+                    {
                         if (sscanf(line, "Miner PID: %d", &auxPID) == 1)
                             kill(auxPID, SIGUSR1);
+                    }
                     fclose(f);
                 }
                 sem_post(sem);
             }
+
             got_sigusr2 = 0;
+
+            clock_gettime(CLOCK_MONOTONIC, &t_now);
+            tiempoPasado = (t_now.tv_sec - t_start.tv_sec) +
+                           (t_now.tv_nsec - t_start.tv_nsec) / 1e9;
         }
 
         close(fd1[1]);
         close(fd2[0]);
 
+        /*Unregister the miner: remove PID and show status */
         remaining_miners = unregister_miner(getpid(), sem);
 
+        /* Clean up semaphore */
         sem_close(sem);
         sem_close(sem_target);
         sem_close(sem_winner);
@@ -792,8 +859,8 @@ int main(int argc, char *argv[])
 
         free(threads);
         free(args);
-
         exit(EXIT_SUCCESS);
     }
+
     return 0;
 }

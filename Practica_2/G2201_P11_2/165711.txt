@@ -1,0 +1,35 @@
+Id: 17
+Winner: 165711
+Target: 03077079
+Solution: 05218179 (validated)
+Votes: 2/3
+Wallets: 165711:1
+
+Id: 30
+Winner: 165711
+Target: 04805188
+Solution: 00012670 (validated)
+Votes: 2/2
+Wallets: 165711:2
+
+Id: 31
+Winner: 165711
+Target: 00012670
+Solution: 05471382 (validated)
+Votes: 2/2
+Wallets: 165711:3
+
+Id: 33
+Winner: 165711
+Target: 09892035
+Solution: 05102694 (validated)
+Votes: 2/2
+Wallets: 165711:4
+
+Id: 46
+Winner: 165711
+Target: 05795776
+Solution: 05112584 (validated)
+Votes: 2/2
+Wallets: 165711:5
+
