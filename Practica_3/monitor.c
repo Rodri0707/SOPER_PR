@@ -26,7 +26,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/wait.h>   
-#include <mqueue.h>
+#include <mqueue.h> 
 #include <signal.h>
 #include "pow.h"
 #include "structs.h"
