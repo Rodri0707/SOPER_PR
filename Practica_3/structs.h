@@ -31,19 +31,6 @@
 #define CAPACIDAD_BUFFER 6
 
 /* --- ESTRUCTURAS DE DATOS (Minero -> Comprobador) --- */
-
-/**
- * @struct Semaphores
- * @brief Groups all four named semaphores used by the system so they can be
- * passed as a single argument instead of four separate pointers.
- */
-typedef struct
-{
-    sem_t *miners;  /* Protects MINERS_LOG and the PID list        */
-    sem_t *target;  /* Protects TARGET_FILE                         */
-    sem_t *winner;  /* Binary mutex: only one winner per round      */
-    sem_t *votes;   /* Protects VOTING_FILE                         */
-} Semaphores;
  
 
 typedef struct {
