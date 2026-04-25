@@ -240,7 +240,7 @@ static int register_miner(pid_t pid, MemoriaCompartida *shm_ptr)
     return is_first;
 }
 
-static int unregister_miner(pid_t pid, MemoriaCompartida *shm_ptr)
+static int unregister_miner(pid_t pid, MemoriaCompartida *shm_ptr, mqd_t mq)
 {
     int remaining = 0;
     int i;
@@ -259,9 +259,6 @@ static int unregister_miner(pid_t pid, MemoriaCompartida *shm_ptr)
 
     remaining = shm_ptr->num_mineros_activos;
 
-    if (remaining == 0)
-        send_termination_block(mq);
-
     printf("Miner %d exited system\n", (int)pid);
 
     /* Si aún quedan mineros, imprimimos la lista actualizada (igual que haciamos con el fichero) */
@@ -277,6 +274,9 @@ static int unregister_miner(pid_t pid, MemoriaCompartida *shm_ptr)
     }
 
     sem_post(&shm_ptr->sem_miners);
+    
+    if (remaining == 0)
+        send_termination_block(mq);
 
     /* Devolvemos el número de mineros restantes, para saber si enviamos el bloque de finalización */
     return remaining;
@@ -501,6 +501,7 @@ static void winner_round(MemoriaCompartida *shm_ptr, int solution, int target,
             }
         }
         sem_post(&shm_ptr->sem_miners);
+        write_target(shm_ptr, (int)pow_hash(solution));
     }
     else
     {
@@ -637,7 +638,7 @@ int main(int argc, char *argv[])
     int n_secs, n_threads;
     int found_solution, target, is_winner;
     int id_round = 0, my_coins = 0;
-    int remaining_miners, is_first;
+    int is_first;
     int fd1[2], fd2[2];
 
     pthread_t *threads = NULL;
@@ -794,7 +795,7 @@ int main(int argc, char *argv[])
     wait(NULL);
 
     /* DESREGISTRO Y LIBERACIÓN */
-    unregister_miner(getpid(), shm_ptr);
+    unregister_miner(getpid(), shm_ptr, mq);
     free_resources(shm_ptr, mq, threads, args);
 
     return 0;

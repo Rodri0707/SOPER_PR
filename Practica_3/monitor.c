@@ -34,20 +34,6 @@
 /* ── Globals ──────────────────────────────────────────────────────────────── */
 static mqd_t mq = (mqd_t)-1; /* Message queue (created by Comprobador) */
 MemoriaCompartida *shm_struct = MAP_FAILED;
-/* Signal flag used by the Monitor child to detect shutdown */
-static volatile sig_atomic_t fin_sistema = 0;
-
-/* ── Signal handler ───────────────────────────────────────────────────────── */
-/**
- * @brief Handles SIGUSR1 in the Monitor child to signal end of system.
- */
-static void handler_fin(int sig)
-{
-    if (sig == SIGUSR1)
-        fin_sistema = 1;
-}
-
-/* ── Resource management ──────────────────────────────────────────────────── */
 
 /**
  * @brief Creates the POSIX message queue that the miners will use to send
