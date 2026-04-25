@@ -29,27 +29,11 @@
 #include <mqueue.h>
 #include <signal.h>
 #include "pow.h"
-
-/* ── Message queue ────────────────────────────────────────────────────────── */
-#define MQ_NAME      "/miner_rush_queue"
-#define MQ_MAX_MSG   7          /* Maximum messages in the queue            */
-#define MAX_MINERS   10         /* Assumed upper bound on concurrent miners */
-
-/**
- * @struct MQBlock
- * @brief Block received from the winning miner via message queue.
- * Must match the definition in miner.c exactly.
- */
-typedef struct
-{
-    int target;   /* Target of the round                              */
-    int solution; /* Solution found by the winner                     */
-    int is_final; /* 1 → termination sentinel, 0 → normal round data */
-} MQBlock;
+#include "structs.h"
 
 /* ── Globals ──────────────────────────────────────────────────────────────── */
-static mqd_t mq = (mqd_t)-1;          /* Message queue (created by Comprobador) */
-
+static mqd_t mq = (mqd_t)-1; /* Message queue (created by Comprobador) */
+MemoriaCompartida *shm_struct = MAP_FAILED;
 /* Signal flag used by the Monitor child to detect shutdown */
 static volatile sig_atomic_t fin_sistema = 0;
 
@@ -73,13 +57,47 @@ static void handler_fin(int sig)
  */
 static void creacionRecursos(void)
 {
+    int fd_shm;
     struct mq_attr attr;
-    attr.mq_flags   = 0;
-    attr.mq_maxmsg  = MQ_MAX_MSG;
+    attr.mq_flags = 0;
+    attr.mq_maxmsg = MQ_MAX_MSG;
     attr.mq_msgsize = sizeof(MQBlock);
     attr.mq_curmsgs = 0;
 
+
+    shm_unlink(SHM_NAME);
     /* Remove any stale queue from a previous run */
+    if ((fd_shm = shm_open(SHM_NAME, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)) == -1)
+    {
+        perror(" shm_open ");
+        exit(EXIT_FAILURE);
+    }
+
+    if (ftruncate(fd_shm, sizeof(MemoriaCompartida)) == -1)
+    {
+        perror(" ftruncate ");
+        shm_unlink(SHM_NAME);
+        exit(EXIT_FAILURE);
+    }
+
+    shm_struct = mmap(NULL, sizeof(MemoriaCompartida), PROT_READ | PROT_WRITE, MAP_SHARED, fd_shm, 0);
+    close(fd_shm);
+    if (shm_struct == MAP_FAILED)
+    {
+        perror(" mmap ");
+        shm_unlink(SHM_NAME);
+        exit(EXIT_FAILURE);
+    }
+    shm_struct->in = 0;
+    shm_struct->out = 0;
+    shm_struct->num_mineros_activos = 0;
+    shm_struct->objetivo_actual = 0; 
+
+    sem_init(&shm_struct->sem_mutex_buffer, 1, 1);               
+    sem_init(&shm_struct->sem_empty, 1, CAPACIDAD_BUFFER);       
+    sem_init(&shm_struct->sem_fill, 1, 0);                       
+    sem_init(&shm_struct->sem_mutex_global, 1, 1);               
+
     mq_unlink(MQ_NAME);
 
     mq = mq_open(MQ_NAME,
@@ -105,14 +123,25 @@ static void limpiezaRecursos(void)
         mq_close(mq);
         mq_unlink(MQ_NAME);
     }
+
+    if (shm_struct != MAP_FAILED)
+    {
+        sem_destroy(&shm_struct->sem_mutex_buffer);
+        sem_destroy(&shm_struct->sem_empty);
+        sem_destroy(&shm_struct->sem_fill);
+        sem_destroy(&shm_struct->sem_mutex_global);
+
+        munmap(shm_struct, sizeof(MemoriaCompartida));
+        shm_unlink(SHM_NAME);
+    }
 }
 
 /* ── Main ─────────────────────────────────────────────────────────────────── */
 
 int main(int argc, char *argv[])
 {
-    int  comprobacion_lag;
-    int  monitor_lag;
+    int comprobacion_lag;
+    int monitor_lag;
     pid_t pid;
 
     if (argc != 3)
@@ -122,7 +151,7 @@ int main(int argc, char *argv[])
     }
 
     comprobacion_lag = atoi(argv[1]);
-    monitor_lag      = atoi(argv[2]);
+    monitor_lag = atoi(argv[2]);
 
     if (comprobacion_lag <= 0 || monitor_lag <= 0)
     {
@@ -149,7 +178,7 @@ int main(int argc, char *argv[])
     {
         struct sigaction act;
         act.sa_handler = handler_fin;
-        act.sa_flags   = 0;
+        act.sa_flags = 0;
         sigemptyset(&act.sa_mask);
         sigaction(SIGUSR1, &act, NULL);
 
@@ -181,7 +210,7 @@ int main(int argc, char *argv[])
     else
     {
         MQBlock block;
-        int     is_valid;
+        int is_valid;
 
         while (1)
         {
@@ -189,7 +218,7 @@ int main(int argc, char *argv[])
             if (mq_receive(mq, (char *)&block, sizeof(MQBlock), NULL) == -1)
             {
                 if (errno == EINTR)
-                    continue;   /* Interrupted by a signal — retry */
+                    continue; /* Interrupted by a signal — retry */
                 perror("mq_receive");
                 break;
             }
