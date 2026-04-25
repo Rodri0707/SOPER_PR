@@ -25,11 +25,27 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <sys/wait.h>
+#include <sys/wait.h>   
 #include <mqueue.h>
 #include <signal.h>
 #include "pow.h"
-#include "structs.h"
+
+/* ── Message queue ────────────────────────────────────────────────────────── */
+#define MQ_NAME      "/miner_rush_queue"
+#define MQ_MAX_MSG   10          /* Maximum messages in the queue            */
+#define MAX_MINERS   10         /* Assumed upper bound on concurrent miners */
+
+/**
+ * @struct MQBlock
+ * @brief Block received from the winning miner via message queue.
+ * Must match the definition in miner.c exactly.
+ */
+typedef struct
+{
+    int target;   /* Target of the round                              */
+    int solution; /* Solution found by the winner                     */
+    int is_final; /* 1 → termination sentinel, 0 → normal round data */
+} MQBlock;
 
 /* ── Globals ──────────────────────────────────────────────────────────────── */
 static mqd_t mq = (mqd_t)-1; /* Message queue (created by Comprobador) */
