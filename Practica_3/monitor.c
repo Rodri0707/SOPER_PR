@@ -32,7 +32,7 @@
 
 /* ── Message queue ────────────────────────────────────────────────────────── */
 #define MQ_NAME      "/miner_rush_queue"
-#define MQ_MAX_MSG   7          /* Maximum messages in the queue            */
+#define MQ_MAX_MSG   10          /* Maximum messages in the queue            */
 #define MAX_MINERS   10         /* Assumed upper bound on concurrent miners */
 
 /**
