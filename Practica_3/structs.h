@@ -102,11 +102,16 @@ typedef struct {
     int out;  
     
     /* === PARTE 3: SEMÁFOROS SIN NOMBRE === */
+    //Para productor Consumidor
     sem_t sem_mutex_buffer; 
     sem_t sem_empty;
     sem_t sem_fill;
     
-    sem_t sem_mutex_global; 
+    // Para los Mineros (Control de concurrencia específico)
+    sem_t sem_miners;  // Protege los arrays de pids y el contador de mineros
+    sem_t sem_target;  // Protege el objetivo_actual y la solucion_propuesta
+    sem_t sem_winner;  // Semáforo de competición para decidir el ganador de la ronda
+    sem_t sem_votes;   // Protege el array de votos y el contador de votos recibidos
 
 } MemoriaCompartida;
 

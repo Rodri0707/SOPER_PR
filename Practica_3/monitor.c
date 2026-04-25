@@ -29,23 +29,7 @@
 #include <mqueue.h>
 #include <signal.h>
 #include "pow.h"
-
-/* ── Message queue ────────────────────────────────────────────────────────── */
-#define MQ_NAME      "/miner_rush_queue"
-#define MQ_MAX_MSG   10          /* Maximum messages in the queue            */
-#define MAX_MINERS   10         /* Assumed upper bound on concurrent miners */
-
-/**
- * @struct MQBlock
- * @brief Block received from the winning miner via message queue.
- * Must match the definition in miner.c exactly.
- */
-typedef struct
-{
-    int target;   /* Target of the round                              */
-    int solution; /* Solution found by the winner                     */
-    int is_final; /* 1 → termination sentinel, 0 → normal round data */
-} MQBlock;
+#include "structs.h"
 
 /* ── Globals ──────────────────────────────────────────────────────────────── */
 static mqd_t mq = (mqd_t)-1; /* Message queue (created by Comprobador) */
@@ -112,7 +96,10 @@ static void creacionRecursos(void)
     sem_init(&shm_struct->sem_mutex_buffer, 1, 1);               
     sem_init(&shm_struct->sem_empty, 1, CAPACIDAD_BUFFER);       
     sem_init(&shm_struct->sem_fill, 1, 0);                       
-    sem_init(&shm_struct->sem_mutex_global, 1, 1);               
+    sem_init(&shm_struct->sem_miners, 1, 1);
+    sem_init(&shm_struct->sem_target, 1, 1);
+    sem_init(&shm_struct->sem_winner, 1, 1);
+    sem_init(&shm_struct->sem_votes,  1, 1);            
 
     mq_unlink(MQ_NAME);
 
@@ -145,7 +132,10 @@ static void limpiezaRecursos(void)
         sem_destroy(&shm_struct->sem_mutex_buffer);
         sem_destroy(&shm_struct->sem_empty);
         sem_destroy(&shm_struct->sem_fill);
-        sem_destroy(&shm_struct->sem_mutex_global);
+        sem_destroy(&shm_struct->sem_miners);
+        sem_destroy(&shm_struct->sem_target);
+        sem_destroy(&shm_struct->sem_winner);
+        sem_destroy(&shm_struct->sem_votes);
 
         munmap(shm_struct, sizeof(MemoriaCompartida));
         shm_unlink(SHM_NAME);
@@ -192,30 +182,38 @@ int main(int argc, char *argv[])
     /* ── MONITOR (child) ────────────────────────────────────────────────── */
     else if (pid == 0)
     {
-        struct sigaction act;
-        act.sa_handler = handler_fin;
-        act.sa_flags = 0;
-        sigemptyset(&act.sa_mask);
-        sigaction(SIGUSR1, &act, NULL);
+        BloqueProdCons bloque_leido;
 
-        /* The Monitor child does not use the queue directly */
+        /* El monitor no usa la cola*/
         mq_close(mq);
 
         printf("[%d] Printing blocks ...\n", getpid());
 
-        /*
-         * Apartado b): simple reception loop.
-         * In the final version (apartado c) this loop will extract blocks
-         * from shared memory using the producer-consumer scheme.
-         */
-        while (!fin_sistema)
+        
+        while (1)
         {
+            /* ZONA CONSUMIDOR (Extraer del Buffer) */
+            sem_wait(&shm_struct->sem_fill);         /* Esperamos a que haya algo que leer */
+            sem_wait(&shm_struct->sem_mutex_buffer); /* Bloqueamos el buffer */
+
+            bloque_leido = shm_struct->buffer[shm_struct->out];
+            shm_struct->out = (shm_struct->out + 1) % CAPACIDAD_BUFFER;
+
+            sem_post(&shm_struct->sem_mutex_buffer); /* Desbloqueamos el buffer */
+            sem_post(&shm_struct->sem_empty);        /* Avisamos de que hemos dejado un hueco libre */
+
+            if (bloque_leido.es_finalizacion)
+                break;
+
+            /* Imprimimos el resultado */
+            if (bloque_leido.es_valido)
+                printf("Solution accepted: %08d --> %08d\n",
+                       bloque_leido.objetivo, bloque_leido.solucion);
+            else
+                printf("Solution rejected: %08d !-> %08d\n",
+                       bloque_leido.objetivo, bloque_leido.solucion);
+
             usleep(monitor_lag * 1000);
-            /* Placeholder: in part c), consume one block from shared memory
-             * and print it here with the required format:
-             *   "Solution accepted: %08d --> %08d"
-             *   "Solution rejected: %08d !-> %08d"
-             */
         }
 
         printf("[%d] Finishing\n", getpid());
@@ -230,50 +228,42 @@ int main(int argc, char *argv[])
 
         while (1)
         {
-            /* Blocking receive: wait until a miner sends a block */
             if (mq_receive(mq, (char *)&block, sizeof(MQBlock), NULL) == -1)
             {
-                if (errno == EINTR)
-                    continue; /* Interrupted by a signal — retry */
+                if (errno == EINTR) continue;
                 perror("mq_receive");
                 break;
             }
 
-            /* Termination sentinel: the last miner is done */
+            /* Validamos la solución */
+            is_valid = (block.is_final) ? 0 : (pow_hash(block.solution) == block.target);
+
+            /* Preparamos el bloque para la memoria compartida */
+            BloqueProdCons nuevo_bloque;
+            nuevo_bloque.objetivo = block.target;
+            nuevo_bloque.solucion = block.solution;
+            nuevo_bloque.es_valido = is_valid;
+            nuevo_bloque.es_finalizacion = block.is_final;
+
+            /* ZONA PRODUCTOR (Insertar en Buffer) */
+            sem_wait(&shm_struct->sem_empty);        /* Esperamos a que haya un hueco libre */
+            sem_wait(&shm_struct->sem_mutex_buffer); /* Bloqueamos el buffer */
+
+            shm_struct->buffer[shm_struct->in] = nuevo_bloque;
+            shm_struct->in = (shm_struct->in + 1) % CAPACIDAD_BUFFER;
+
+            sem_post(&shm_struct->sem_mutex_buffer); /* Desbloqueamos el buffer */
+            sem_post(&shm_struct->sem_fill);         /* Avisamos de que hay un hueco lleno nuevo */
+
+            /* Si era el último, salimos del bucle */
             if (block.is_final)
-            {
-                /*
-                 * In part c), insert a termination sentinel into the
-                 * shared-memory buffer here so Monitor also exits cleanly.
-                 * For part b), simply signal the Monitor child with SIGUSR1.
-                 */
-                kill(pid, SIGUSR1);
                 break;
-            }
 
-            /* Validate the solution independently (do not trust the miner) */
-            is_valid = (pow_hash(block.solution) == block.target);
-
-            /*
-             * Apartado b): print the received block directly.
-             * In part c), this will be replaced by inserting the block into
-             * shared memory (producer half of producer-consumer).
-             */
-            if (is_valid)
-                printf("Solution accepted: %08d --> %08d\n",
-                       block.target, block.solution);
-            else
-                printf("Solution rejected: %08d !-> %08d\n",
-                       block.target, block.solution);
-
-            /* Wait the configured lag between checks */
             usleep(comprobacion_lag * 1000);
         }
 
-        /* Wait for the Monitor child to finish */
         wait(NULL);
 
-        /* Clean up the queue (miners do NOT do this) */
         limpiezaRecursos();
         exit(EXIT_SUCCESS);
     }
