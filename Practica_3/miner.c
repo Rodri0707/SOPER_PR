@@ -310,7 +310,7 @@ static void broadcast_signal(MemoriaCompartida *shm_ptr, int sig, pid_t exclude_
     {
         if (shm_ptr->pids_activos[i] != 0 && shm_ptr->pids_activos[i] != exclude_pid)
         {
-            kill(shm_ptr->pids_activos[i], sig); // ¡Le disparamos!
+            kill(shm_ptr->pids_activos[i], sig); 
         }
     }
 
@@ -501,7 +501,7 @@ static void winner_round(MemoriaCompartida *shm_ptr, int solution, int target,
             }
         }
         sem_post(&shm_ptr->sem_miners);
-        write_target(shm_ptr, (int)pow_hash(solution));
+        write_target(shm_ptr, solution);
     }
     else
     {

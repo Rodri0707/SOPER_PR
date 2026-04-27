@@ -27,7 +27,7 @@ test: all
 	./monitor 10 5 & \
 	sleep 1; \
 	echo "Lanzando Mineros..."; \
-	./miner 3 8 & ./miner 5 8 & ./miner 10 1; \
+	./miner 5 3 & ./miner 5 7 & ./miner 5 3 & ./miner 5 7 & ./miner 5 3 & ./miner 5 7; \
 	wait
 	@echo "Prueba finalizada."
 
